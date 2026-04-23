@@ -41,4 +41,5 @@ Sudo IS needed so once built run `sudo ./linuxce`.
 
 If the build fails and yells at you about a missing file, just try `dnf provides */name-of-file.h` to see what package you're missing.
 
-Enjoy skids
+
+# Cons
