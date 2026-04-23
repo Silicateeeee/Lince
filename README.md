@@ -42,3 +42,8 @@ sudo ./Lince
 This is really only meant for game hacking so aslong as your doing nothing extreme it should be ok
 
 You do need sudo to run it
+
+
+## Example
+
+<img width="723" height="743" alt="Screenshot_20260423_123816" src="https://github.com/user-attachments/assets/43a8de0c-2330-4341-a637-45bad685afe8" />
