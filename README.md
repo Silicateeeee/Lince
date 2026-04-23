@@ -1,4 +1,4 @@
-# Linux Cheat Engine
+# Lince
 
 So, I made this simple cheat engine for Linux. It's basically a memory scanner you find a value in a game or program, and you can change it. It's got the classic layout you'd expect: scanner on the right, results on the left, and a list at the bottom to keep track of stuff.
 
