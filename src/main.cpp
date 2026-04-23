@@ -14,6 +14,8 @@
 #include "process.hpp"
 #include "mem_scanner.hpp"
 
+bool processNameContains(const std::string& name, const std::string& filter);
+
 MemScanner g_scanner;
 std::vector<ProcessInfo> g_processes;
 ProcessInfo g_selectedProcess = {-1, "None", ""};
@@ -46,11 +48,20 @@ struct EditState {
     int index = -1;
     EditField field = EditField::None;
     char buffer[256] = "";
+    int session = 0; // incremented each time an edit begins, forces ImGui to treat InputText as a new widget
 } g_editState;
 
 char g_searchValue[128] = "100";
 int g_selectedType = 2;
 const char* g_types[] = { "Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "String" };
+
+// Helper: clears buffer fully before writing to prevent stale character bleed,
+// and bumps the session counter so ImGui's InputText cache is invalidated.
+static void SetEditBuffer(const char* str) {
+    memset(g_editState.buffer, 0, sizeof(g_editState.buffer));
+    snprintf(g_editState.buffer, sizeof(g_editState.buffer), "%s", str);
+    g_editState.session++;
+}
 
 static void glfw_error_callback(int error, const char* description) {
     fprintf(stderr, "GLFW Error %d: %s\n", error, description);
@@ -60,15 +71,15 @@ void DrawProcessSelector() {
     if (ImGui::BeginPopupModal("Select Process", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
         static char filter[128] = "";
         ImGui::InputText("Filter", filter, IM_ARRAYSIZE(filter));
-        
+
         if (ImGui::Button("Refresh")) {
             g_processes = getRunningProcesses();
         }
-        
+
         ImGui::BeginChild("ProcessList", ImVec2(500, 300), true);
         for (const auto& proc : g_processes) {
-            if (strlen(filter) > 0 && proc.name.find(filter) == std::string::npos) continue;
-            
+            if (!processNameContains(proc.name, filter)) continue;
+
             char label[256];
             snprintf(label, sizeof(label), "[%d] %s", proc.pid, proc.name.c_str());
             if (ImGui::Selectable(label, g_selectedProcess.pid == proc.pid)) {
@@ -79,7 +90,7 @@ void DrawProcessSelector() {
             }
         }
         ImGui::EndChild();
-        
+
         if (ImGui::Button("Cancel")) {
             ImGui::CloseCurrentPopup();
         }
@@ -89,7 +100,7 @@ void DrawProcessSelector() {
 
 void DrawTopLeft() {
     ImGui::BeginChild("Results", ImVec2(ImGui::GetContentRegionAvail().x * 0.4f, ImGui::GetContentRegionAvail().y * 0.6f), true);
-    
+
     auto results = g_scanner.getResults();
     ImGui::Text("Found: %zu", results.size());
     ImGui::SameLine();
@@ -98,7 +109,7 @@ void DrawTopLeft() {
             g_savedAddresses.push_back({false, "No description", res.address, (ValueType)g_selectedType, "???"});
         }
     }
-    
+
     if (g_scanner.isScanning()) {
         ImGui::ProgressBar(g_scanner.getProgress(), ImVec2(-1, 0), "Scanning...");
     }
@@ -124,14 +135,14 @@ void DrawTopLeft() {
                     g_savedAddresses.push_back({false, "No description", results[i].address, (ValueType)g_selectedType, "???"});
                 }
             }
-            
+
             if (ImGui::BeginPopupContextItem()) {
                 if (ImGui::MenuItem("Add to Address List")) {
                     g_savedAddresses.push_back({false, "No description", results[i].address, (ValueType)g_selectedType, "???"});
                 }
                 ImGui::EndPopup();
             }
-            
+
             ImGui::TableSetColumnIndex(1);
             if (g_selectedType == 6) {
                 std::string val = g_scanner.readString(results[i].address, 16);
@@ -177,7 +188,7 @@ void DrawSettingsWindow() {
             }
             ImGui::EndTabBar();
         }
-        
+
         if (ImGui::Button("Close")) g_showSettings = false;
         ImGui::End();
     }
@@ -187,7 +198,7 @@ void DrawTopRight() {
     ImGui::SameLine();
     ImGui::BeginGroup();
     ImGui::BeginChild("Controls", ImVec2(0, ImGui::GetContentRegionAvail().y * 0.6f), true);
-    
+
     ImGui::Text("Process: [%d] %s", g_selectedProcess.pid, g_selectedProcess.name.c_str());
     ImGui::BeginDisabled(g_scanner.isScanning());
     if (ImGui::Button("Select Process")) {
@@ -198,12 +209,12 @@ void DrawTopRight() {
     if (ImGui::Button("Settings")) {
         g_showSettings = true;
     }
-    
+
     ImGui::Separator();
-    
+
     ImGui::InputText("Value", g_searchValue, IM_ARRAYSIZE(g_searchValue));
     ImGui::Combo("Value Type", &g_selectedType, g_types, IM_ARRAYSIZE(g_types));
-    
+
     if (ImGui::Button("First Scan", ImVec2(100, 0))) {
         g_scanner.firstScan((ValueType)g_selectedType, g_searchValue);
     }
@@ -226,11 +237,12 @@ void DrawEditPopups() {
 
     ImGui::OpenPopup("Edit Field");
     if (ImGui::BeginPopupModal("Edit Field", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Editing %s", 
-            g_editState.field == EditField::Description ? "Description" :
-            g_editState.field == EditField::Address ? "Address" :
-            g_editState.field == EditField::Value ? "Value" : "Type");
-            
+
+        ImGui::Text("Editing %s",
+                    g_editState.field == EditField::Description ? "Description" :
+                    g_editState.field == EditField::Address ? "Address" :
+                    g_editState.field == EditField::Value ? "Value" : "Type");
+
         if (g_editState.field == EditField::Type) {
             static int typeIdx = 0;
             ImGui::Combo("Type", &typeIdx, g_types, IM_ARRAYSIZE(g_types));
@@ -240,28 +252,47 @@ void DrawEditPopups() {
                 ImGui::CloseCurrentPopup();
             }
         } else {
-            ImGui::InputText("New Value", g_editState.buffer, IM_ARRAYSIZE(g_editState.buffer));
+            // Session counter in the label forces ImGui to treat this as a brand
+            // new widget each edit, discarding any internally cached text state.
+            char inputLabel[32];
+            snprintf(inputLabel, sizeof(inputLabel), "New Value##%d", g_editState.session);
+            ImGui::InputText(inputLabel, g_editState.buffer, IM_ARRAYSIZE(g_editState.buffer));
+
             if (ImGui::Button("OK", ImVec2(120, 0))) {
                 auto& addr = g_savedAddresses[g_editState.index];
                 try {
                     if (g_editState.field == EditField::Value) {
-                        if (g_savedAddresses[g_editState.index].type == ValueType::String) {
-                            g_scanner.writeString(addr.address, g_editState.buffer);
+                        if (addr.type == ValueType::String) {
+                            // Write each character byte by byte, then null terminate.
+                            // This ensures shorter strings don't leave stale bytes
+                            // from the previous value sitting in memory.
+                            size_t len = strlen(g_editState.buffer);
+                            for (size_t j = 0; j < len; j++) {
+                                g_scanner.writeMemory<uint8_t>(addr.address + j, (uint8_t)g_editState.buffer[j]);
+                            }
+                            g_scanner.writeMemory<uint8_t>(addr.address + len, 0);
+                            printf("Successfully wrote string \"%s\" (%zu bytes + null) to address %p.\n",
+                                   g_editState.buffer, len, (void*)addr.address);
                         } else {
                             uint32_t val = (uint32_t)std::stoul(g_editState.buffer);
                             g_scanner.writeMemory<uint32_t>(addr.address, val);
+                            printf("Successfully wrote uint32_t value %u to address %p.\n", val, (void*)addr.address);
                         }
                     } else if (g_editState.field == EditField::Description) {
                         addr.description = g_editState.buffer;
+                        printf("Successfully updated description for address %p.\n", (void*)addr.address);
                     } else if (g_editState.field == EditField::Address) {
                         addr.address = std::stoull(g_editState.buffer, nullptr, 16);
+                        printf("Successfully updated address to %p.\n", (void*)addr.address);
                     }
-                } catch (...) {}
+                } catch (...) {
+                    fprintf(stderr, "Error updating field %d. Please check input format and permissions.\n", (int)g_editState.field);
+                }
                 g_editState.field = EditField::None;
                 ImGui::CloseCurrentPopup();
             }
         }
-        
+
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0))) {
             g_editState.field = EditField::None;
@@ -286,21 +317,21 @@ void DrawBottom() {
             auto& addr = g_savedAddresses[i];
             ImGui::TableNextRow();
             ImGui::PushID(i);
-            
+
             ImGui::TableSetColumnIndex(0);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
             ImGui::SetWindowFontScale(0.8f);
             ImGui::Checkbox("##active", &addr.active);
             ImGui::SetWindowFontScale(1.0f);
             ImGui::PopStyleVar();
-            
+
             auto CellItem = [&](const char* label, EditField field, const char* bufferInit, int colIdx) {
                 ImGui::PushID(colIdx);
                 if (ImGui::Selectable(label, false, ImGuiSelectableFlags_AllowDoubleClick)) {
                     if (ImGui::IsMouseDoubleClicked(0)) {
                         g_editState.index = i;
                         g_editState.field = field;
-                        snprintf(g_editState.buffer, sizeof(g_editState.buffer), "%s", bufferInit);
+                        SetEditBuffer(bufferInit); // clears + bumps session
                     }
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Double-click to edit");
@@ -310,12 +341,14 @@ void DrawBottom() {
                     if (ImGui::MenuItem("Change Description")) {
                         g_editState.index = i;
                         g_editState.field = EditField::Description;
-                        snprintf(g_editState.buffer, sizeof(g_editState.buffer), "%s", addr.description.c_str());
+                        SetEditBuffer(addr.description.c_str()); // clears + bumps session
                     }
                     if (ImGui::MenuItem("Change Address")) {
                         g_editState.index = i;
                         g_editState.field = EditField::Address;
-                        snprintf(g_editState.buffer, sizeof(g_editState.buffer), "%lx", addr.address);
+                        char tmp[32];
+                        snprintf(tmp, sizeof(tmp), "%lx", addr.address);
+                        SetEditBuffer(tmp); // clears + bumps session
                     }
                     if (ImGui::MenuItem("Change Type")) {
                         g_editState.index = i;
@@ -324,8 +357,10 @@ void DrawBottom() {
                     if (ImGui::MenuItem("Change Value")) {
                         g_editState.index = i;
                         g_editState.field = EditField::Value;
+                        char tmp[32];
                         uint32_t currentVal = g_scanner.readMemory<uint32_t>(addr.address);
-                        snprintf(g_editState.buffer, sizeof(g_editState.buffer), "%u", currentVal);
+                        snprintf(tmp, sizeof(tmp), "%u", currentVal);
+                        SetEditBuffer(tmp); // clears + bumps session
                     }
                     ImGui::EndPopup();
                 }
@@ -334,15 +369,15 @@ void DrawBottom() {
 
             ImGui::TableSetColumnIndex(1);
             CellItem(addr.description.c_str(), EditField::Description, addr.description.c_str(), 1);
-            
+
             ImGui::TableSetColumnIndex(2);
             char addrStr[32];
             snprintf(addrStr, sizeof(addrStr), "%p", (void*)addr.address);
-            CellItem(addrStr, EditField::Address, addrStr + 2, 2); 
-            
+            CellItem(addrStr, EditField::Address, addrStr + 2, 2);
+
             ImGui::TableSetColumnIndex(3);
             CellItem(g_types[(int)addr.type], EditField::Type, "", 3);
-            
+
             ImGui::TableSetColumnIndex(4);
             std::string valDisplay;
             if (addr.type == ValueType::String) valDisplay = g_scanner.readString(addr.address, 32);
@@ -351,7 +386,7 @@ void DrawBottom() {
                 valDisplay = std::to_string(currentVal);
             }
             CellItem(valDisplay.c_str(), EditField::Value, valDisplay.c_str(), 4);
-            
+
             if (addr.active) {
                 uint32_t freezeVal = (uint32_t)std::stoul(g_searchValue);
                 g_scanner.writeMemory<uint32_t>(addr.address, freezeVal);
@@ -399,11 +434,11 @@ int main(int, char**) {
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(io.DisplaySize);
         ImGui::Begin("Main", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
-        
+
         DrawTopLeft();
         DrawTopRight();
         DrawBottom();
-        
+
         if (g_showProcessSelector) {
             ImGui::OpenPopup("Select Process");
             g_showProcessSelector = false;
@@ -411,7 +446,7 @@ int main(int, char**) {
         DrawProcessSelector();
         DrawEditPopups();
         DrawSettingsWindow();
-        
+
         ImGui::End();
 
         ImGui::Render();

@@ -18,7 +18,7 @@ MemScanner::~MemScanner() {
 bool MemScanner::attach(pid_t pid) {
     std::ifstream maps_file("/proc/" + std::to_string(pid) + "/maps");
     if (!maps_file.is_open()) return false;
-    
+
     m_pid = pid;
     return true;
 }
@@ -61,15 +61,15 @@ std::vector<MemoryRegion> MemScanner::getRegions() {
         uintptr_t end = std::stoull(range.substr(dash + 1), nullptr, 16);
 
         bool permMatch = (g_settings.scanRead && perms.find('r') != std::string::npos) ||
-                         (g_settings.scanWrite && perms.find('w') != std::string::npos) ||
-                         (g_settings.scanExec && perms.find('x') != std::string::npos);
+        (g_settings.scanWrite && perms.find('w') != std::string::npos) ||
+        (g_settings.scanExec && perms.find('x') != std::string::npos);
 
-        if (permMatch && 
+        if (permMatch &&
             !(g_settings.excludeKernel && start >= 0xffffffff80000000) &&
             pathname.find("[vvar]") == std::string::npos &&
             pathname.find("[vdso]") == std::string::npos) {
             regions.push_back({start, end, perms, pathname});
-        }
+            }
     }
     return regions;
 }
@@ -129,13 +129,16 @@ const size_t CHUNK_SIZE = 1024 * 1024; // 1MB
 
 void MemScanner::scanRegionChunked(const MemoryRegion& region, ValueType type, uint32_t targetVal, float targetFloat, const std::string& targetStr, std::vector<ScanResult>& localResults) {
     size_t regionSize = region.end - region.start;
-    size_t valSize = (type == ValueType::String) ? targetStr.length() : 4; 
-    
-    std::vector<uint8_t> buffer(CHUNK_SIZE + 8); 
+    // Read one extra byte past the target so we can check the null terminator for strings
+    size_t valSize = (type == ValueType::String) ? targetStr.length() : 4;
+
+    std::vector<uint8_t> buffer(CHUNK_SIZE + 8);
 
     for (size_t offset = 0; offset < regionSize; offset += CHUNK_SIZE) {
         size_t bytesToRead = std::min(CHUNK_SIZE, regionSize - offset);
-        if (readRaw(region.start + offset, buffer.data(), bytesToRead) > 0) {
+        // Read one extra byte so we can check the character after a string match
+        size_t readSize = std::min(bytesToRead + 1, regionSize - offset);
+        if (readRaw(region.start + offset, buffer.data(), readSize) > 0) {
             for (size_t i = 0; i <= bytesToRead - valSize; ++i) {
                 bool match = false;
                 if (type == ValueType::FourBytes) {
@@ -147,9 +150,16 @@ void MemScanner::scanRegionChunked(const MemoryRegion& region, ValueType type, u
                     std::memcpy(&val, &buffer[i], 4);
                     if (val == targetFloat) match = true;
                 } else if (type == ValueType::String) {
-                    if (std::memcmp(&buffer[i], targetStr.c_str(), targetStr.length()) == 0) match = true;
+                    if (std::memcmp(&buffer[i], targetStr.c_str(), targetStr.length()) == 0) {
+                        // Exact match only: the byte immediately after must be a null terminator.
+                        // This prevents "[FeedbackTool]" matching "[FeedbackTool](Clone)".
+                        size_t afterIdx = i + targetStr.length();
+                        if (afterIdx >= readSize || buffer[afterIdx] == '\0') {
+                            match = true;
+                        }
+                    }
                 }
-                
+
                 if (match) {
                     localResults.push_back({region.start + offset + i});
                 }
@@ -178,7 +188,7 @@ void MemScanner::firstScan(ValueType type, const std::string& valueStr) {
     std::thread([this, type, valueStr]() {
         clearResults();
         auto regions = getRegions();
-        
+
         uint32_t targetVal = 0;
         float targetFloat = 0.0f;
         try {
@@ -209,7 +219,7 @@ void MemScanner::firstScan(ValueType type, const std::string& valueStr) {
             std::lock_guard<std::mutex> lock(m_resultsMutex);
             m_results = std::move(allResults);
         }
-        
+
         m_isScanning = false;
         m_progress = 1.0f;
     }).detach();
@@ -248,12 +258,17 @@ void MemScanner::nextScan(ValueType type, const std::string& valueStr) {
                 float val = readMemory<float>(res.address);
                 if (val == targetFloat) match = true;
             } else if (type == ValueType::String) {
-                std::string val = readString(res.address, valueStr.length());
-                if (val == valueStr) match = true;
+                // Read one extra byte so we can check the null terminator after the match.
+                std::string val = readString(res.address, valueStr.length() + 1);
+                if (val.length() >= valueStr.length() &&
+                    val.substr(0, valueStr.length()) == valueStr &&
+                    (val.length() == valueStr.length() || val[valueStr.length()] == '\0')) {
+                    match = true;
+                    }
             }
 
             if (match) newResults.push_back(res);
-            
+
             if (i % 1000 == 0) m_progress = (float)i / currentResults.size();
         }
 
