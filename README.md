@@ -6,25 +6,30 @@ So, I made this simple cheat engine for Linux. It's basically a memory scanner y
 
 I wrote this inside a Distrobox (Fedora-based), so if you're using that, here's how to get it working.
 
-### 1. Get inside your box
-If you haven't opened your container yet:
+### 1. Create your box
+If you haven't created your box yet:
 ```bash
-distrobox-enter -n your-container-name
+distrobox create Name-Of-Choice
+```
+### 2. open your box
+If you haven't opened your box yet:
+```bash
+distrobox enter Name-Of-Choice
 ```
 
-### 2. Grab the stuff it needs
+### 3. Grab the stuff it needs
 You'll need the compiler and the graphics libraries to get the UI working. Just run:
 ```bash
 sudo dnf install -y make gcc-c++ glfw-devel mesa-libGL-devel libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel
 ```
 
-### 3. Build it
+### 4. Build it
 Just go into the folder where you put all the files and run:
 ```bash
 make
 ```
 
-### 4. Run it
+### 5. Run it
 Because this thing needs to reach into other programs' memory to change values, you have to run it with root permissions:
 ```bash
 sudo ./linuxce
