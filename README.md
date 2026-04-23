@@ -1,5 +1,6 @@
 # LAUGH
 LAUGH(Linux Adaptation for Universal Game Hacking)
+You can download the prebuilt from https://github.com/Silicateeeee/LAUGH/releases/latest
 
 
 ### How to actually get it running
