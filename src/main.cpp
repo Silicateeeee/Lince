@@ -48,15 +48,12 @@ struct EditState {
     int index = -1;
     EditField field = EditField::None;
     char buffer[256] = "";
-    int session = 0; // incremented each time an edit begins, forces ImGui to treat InputText as a new widget
+    int session = 0;
 } g_editState;
 
 char g_searchValue[128] = "100";
 int g_selectedType = 2;
 const char* g_types[] = { "Byte", "2 Bytes", "4 Bytes", "8 Bytes", "Float", "Double", "String" };
-
-// Helper: clears buffer fully before writing to prevent stale character bleed,
-// and bumps the session counter so ImGui's InputText cache is invalidated.
 static void SetEditBuffer(const char* str) {
     memset(g_editState.buffer, 0, sizeof(g_editState.buffer));
     snprintf(g_editState.buffer, sizeof(g_editState.buffer), "%s", str);
@@ -252,8 +249,6 @@ void DrawEditPopups() {
                 ImGui::CloseCurrentPopup();
             }
         } else {
-            // Session counter in the label forces ImGui to treat this as a brand
-            // new widget each edit, discarding any internally cached text state.
             char inputLabel[32];
             snprintf(inputLabel, sizeof(inputLabel), "New Value##%d", g_editState.session);
             ImGui::InputText(inputLabel, g_editState.buffer, IM_ARRAYSIZE(g_editState.buffer));
@@ -328,7 +323,7 @@ void DrawBottom() {
                     if (ImGui::IsMouseDoubleClicked(0)) {
                         g_editState.index = i;
                         g_editState.field = field;
-                        SetEditBuffer(bufferInit); // clears + bumps session
+                        SetEditBuffer(bufferInit);
                     }
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Double-click to edit");
@@ -338,14 +333,14 @@ void DrawBottom() {
                     if (ImGui::MenuItem("Change Description")) {
                         g_editState.index = i;
                         g_editState.field = EditField::Description;
-                        SetEditBuffer(addr.description.c_str()); // clears + bumps session
+                        SetEditBuffer(addr.description.c_str());
                     }
                     if (ImGui::MenuItem("Change Address")) {
                         g_editState.index = i;
                         g_editState.field = EditField::Address;
                         char tmp[32];
                         snprintf(tmp, sizeof(tmp), "%lx", addr.address);
-                        SetEditBuffer(tmp); // clears + bumps session
+                        SetEditBuffer(tmp);
                     }
                     if (ImGui::MenuItem("Change Type")) {
                         g_editState.index = i;
@@ -357,7 +352,7 @@ void DrawBottom() {
                         char tmp[32];
                         uint32_t currentVal = g_scanner.readMemory<uint32_t>(addr.address);
                         snprintf(tmp, sizeof(tmp), "%u", currentVal);
-                        SetEditBuffer(tmp); // clears + bumps session
+                        SetEditBuffer(tmp);
                     }
                     ImGui::EndPopup();
                 }
