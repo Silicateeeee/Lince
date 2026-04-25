@@ -3,11 +3,13 @@
 #include "process.hpp"
 #include "quickjs.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <cstring>
 #include <sstream>
 #include <iostream>
 #include <chrono>
 #include <iomanip>
+#include <thread>
 
 namespace laugh {
 
@@ -123,14 +125,45 @@ void JavaScriptEngine::setupBindings() {
         JS_NewCFunction(m_ctx, jsScanMemory, "scan", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(m_ctx, memoryObj, "AOB",
         JS_NewCFunction(m_ctx, jsAOBScan, "AOB", 1), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, memoryObj, "call",
+        JS_NewCFunction(m_ctx, jsMemoryCall, "call", 1), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(m_ctx, memoryObj, "isScanning",
         JS_NewCFunction(m_ctx, jsIsScanning, "isScanning", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(m_ctx, memoryObj, "getProgress",
         JS_NewCFunction(m_ctx, jsGetProgress, "getProgress", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(m_ctx, memoryObj, "getResults",
         JS_NewCFunction(m_ctx, jsGetResults, "getResults", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, memoryObj, "getModules",
+        JS_NewCFunction(m_ctx, jsGetModules, "getModules", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
     JS_DefinePropertyValueStr(m_ctx, memoryObj, "getProcessInfo",
         JS_NewCFunction(m_ctx, jsGetProcessInfo, "getProcessInfo", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+
+    JSValue unityObj = JS_NewObject(m_ctx);
+    JS_SetPropertyStr(m_ctx, global, "unity", unityObj);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "load",
+        JS_NewCFunction(m_ctx, jsUnityLoad, "load", 1), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "getAddress",
+        JS_NewCFunction(m_ctx, jsUnityGetAddress, "getAddress", 3), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "setModuleName",
+        JS_NewCFunction(m_ctx, jsUnitySetModuleName, "setModuleName", 1), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "getModuleBase",
+        JS_NewCFunction(m_ctx, jsUnityGetModuleBase, "getModuleBase", 1), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "searchClasses",
+        JS_NewCFunction(m_ctx, jsUnitySearchClasses, "searchClasses", 1), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "listMethods",
+        JS_NewCFunction(m_ctx, jsUnityListMethods, "listMethods", 2), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "getFields",
+        JS_NewCFunction(m_ctx, jsUnityGetFields, "getFields", 2), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "findObject",
+        JS_NewCFunction(m_ctx, jsUnityFindObject, "findObject", 1), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "getComponents",
+        JS_NewCFunction(m_ctx, jsUnityGetComponents, "getComponents", 1), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "isLoading",
+        JS_NewCFunction(m_ctx, jsUnityIsLoading, "isLoading", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "getLoadProgress",
+        JS_NewCFunction(m_ctx, jsUnityGetLoadProgress, "getLoadProgress", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
+    JS_DefinePropertyValueStr(m_ctx, unityObj, "isLoaded",
+        JS_NewCFunction(m_ctx, jsUnityIsLoaded, "isLoaded", 0), JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE);
 
     JSValue guiObj = JS_NewObject(m_ctx);
     JS_SetPropertyStr(m_ctx, global, "gui", guiObj);
@@ -138,6 +171,7 @@ void JavaScriptEngine::setupBindings() {
     struct GUIBinding { const char* name; JSCFunction* func; int argc; } guiFuncs[] = {
         {"beginWindow", jsWindowBegin, 1}, {"endWindow", jsWindowEnd, 0},
         {"button", jsButton, 1}, {"text", jsText, 1},
+        {"inputText", jsInputText, 2},
         {"inputInt", jsInputInt, 2}, {"inputFloat", jsInputFloat, 2},
         {"checkbox", jsCheckbox, 2}, {"sliderFloat", jsSliderFloat, 4},
         {"separator", jsSeparator, 0}, {"sameLine", jsSameLine, 0},
@@ -173,7 +207,7 @@ JSValue JavaScriptEngine::jsReadMemory(JSContext* ctx, JSValueConst this_val, in
     if (argc < 2) return JS_NULL;
 
     auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
-    uint64_t addr = toUint64(ctx, argv[0]);
+    uintptr_t addr = toUint64(ctx, argv[0]);
     int type = toInt32(ctx, argv[1]);
 
     switch (type) {
@@ -196,88 +230,33 @@ JSValue JavaScriptEngine::jsWriteMemory(JSContext* ctx, JSValueConst this_val, i
     if (argc < 3) return JS_FALSE;
 
     auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
-    uint64_t addr = toUint64(ctx, argv[0]);
+    uintptr_t addr = toUint64(ctx, argv[0]);
     int type = toInt32(ctx, argv[2]);
 
     switch (type) {
-        case 0: ms->writeMemory<uint8_t>(addr, (uint8_t)toInt32(ctx, argv[1])); break;
-        case 1: ms->writeMemory<uint16_t>(addr, (uint16_t)toInt32(ctx, argv[1])); break;
-        case 2: ms->writeMemory<uint32_t>(addr, (uint32_t)toInt32(ctx, argv[1])); break;
-        case 3: ms->writeMemory<uint64_t>(addr, (uint64_t)toInt64(ctx, argv[1])); break;
-        case 4: ms->writeMemory<float>(addr, (float)toFloat64(ctx, argv[1])); break;
-        case 5: ms->writeMemory<double>(addr, (double)toFloat64(ctx, argv[1])); break;
-        case 7: { // AOB
+        case 0: return ms->writeMemory<uint8_t>(addr, (uint8_t)toInt32(ctx, argv[1])) ? JS_TRUE : JS_FALSE;
+        case 1: return ms->writeMemory<uint16_t>(addr, (uint16_t)toInt32(ctx, argv[1])) ? JS_TRUE : JS_FALSE;
+        case 2: return ms->writeMemory<uint32_t>(addr, (uint32_t)toInt32(ctx, argv[1])) ? JS_TRUE : JS_FALSE;
+        case 3: return ms->writeMemory<uint64_t>(addr, (uint64_t)toInt64(ctx, argv[1])) ? JS_TRUE : JS_FALSE;
+        case 4: return ms->writeMemory<float>(addr, (float)toFloat64(ctx, argv[1])) ? JS_TRUE : JS_FALSE;
+        case 5: return ms->writeMemory<double>(addr, (double)toFloat64(ctx, argv[1])) ? JS_TRUE : JS_FALSE;
+        case 7: { // AOB Patch
             const char* pattern = JS_ToCString(ctx, argv[1]);
+            bool success = false;
             if (pattern) {
-                ms->patch(addr, pattern);
+                success = ms->patch(addr, pattern);
                 JS_FreeCString(ctx, pattern);
             }
-            break;
+            return success ? JS_TRUE : JS_FALSE;
         }
         default: return JS_FALSE;
     }
-    return JS_TRUE;
 }
 
 JSValue JavaScriptEngine::jsScanMemory(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    if (!s_current || !s_current->m_memoryScanner) {
-        return JS_NewArray(ctx);
-    }
-
-    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
-    auto results = ms->getResults();
-
-    JSValue arr = JS_NewArray(ctx);
-    uint32_t idx = 0;
-    for (const auto& res : results) {
-        JS_SetPropertyUint32(ctx, arr, idx++, JS_NewBigUint64(ctx, res.address));
-    }
-    return arr;
-}
-
-JSValue JavaScriptEngine::jsAOBScan(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    if (!s_current || !s_current->m_memoryScanner) return JS_NULL;
-    if (argc < 1) return JS_NULL;
-
-    const char* pattern = JS_ToCString(ctx, argv[0]);
-    if (!pattern) return JS_NULL;
-
-    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
-    
-    // Check if already scanning
-    if (ms->isScanning()) {
-        JS_FreeCString(ctx, pattern);
-        return JS_ThrowInternalError(ctx, "Scan already in progress");
-    }
-
-    ms->firstScan(ValueType::AOB, pattern);
-    JS_FreeCString(ctx, pattern);
-
-    JSValue resolving_funcs[2];
-    JSValue promise = JS_NewPromiseCapability(ctx, resolving_funcs);
-    
-    s_current->m_pendingPromises.push_back({JS_DupValue(ctx, resolving_funcs[0]), JS_DupValue(ctx, resolving_funcs[1])});
-    
-    return promise;
-}
-
-JSValue JavaScriptEngine::jsIsScanning(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    if (!s_current || !s_current->m_memoryScanner) return JS_FALSE;
-    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
-    return ms->isScanning() ? JS_TRUE : JS_FALSE;
-}
-
-JSValue JavaScriptEngine::jsGetProgress(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    if (!s_current || !s_current->m_memoryScanner) return JS_NewFloat64(ctx, 0.0);
-    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
-    return JS_NewFloat64(ctx, ms->getProgress());
-}
-
-JSValue JavaScriptEngine::jsGetResults(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     if (!s_current || !s_current->m_memoryScanner) return JS_NewArray(ctx);
     auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
     auto results = ms->getResults();
-
     JSValue arr = JS_NewArray(ctx);
     for (uint32_t i = 0; i < results.size(); ++i) {
         JS_SetPropertyUint32(ctx, arr, i, JS_NewBigUint64(ctx, results[i].address));
@@ -285,9 +264,108 @@ JSValue JavaScriptEngine::jsGetResults(JSContext* ctx, JSValueConst this_val, in
     return arr;
 }
 
+JSValue JavaScriptEngine::jsAOBScan(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || !s_current->m_memoryScanner || argc < 1) return JS_NULL;
+    const char* pattern = JS_ToCString(ctx, argv[0]);
+    if (!pattern) return JS_NULL;
+    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
+    if (ms->isScanning()) {
+        JS_FreeCString(ctx, pattern);
+        return JS_ThrowInternalError(ctx, "Scan already in progress");
+    }
+    ms->firstScan(ValueType::AOB, pattern);
+    JS_FreeCString(ctx, pattern);
+    JSValue resolving_funcs[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolving_funcs);
+    s_current->m_pendingPromises.push_back({JS_DupValue(ctx, resolving_funcs[0]), JS_DupValue(ctx, resolving_funcs[1])});
+    return promise;
+}
+
+#include <sys/ptrace.h>
+#include <sys/wait.h>
+#include <sys/user.h>
+
+JSValue JavaScriptEngine::jsMemoryCall(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || !s_current->m_memoryScanner || argc < 1) return JS_FALSE;
+    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
+    uint64_t targetAddr = toUint64(ctx, argv[0]);
+    pid_t pid = (pid_t)s_current->m_attachedPid;
+
+    if (pid <= 0) return JS_ThrowInternalError(ctx, "No process attached");
+
+    // Hijack via ptrace (Requires sudo)
+    if (ptrace(PTRACE_ATTACH, pid, NULL, NULL) < 0) {
+        return JS_ThrowInternalError(ctx, "Failed to attach (PTRACE_ATTACH). Run with sudo.");
+    }
+    
+    waitpid(pid, NULL, 0);
+
+    struct user_regs_struct oldregs, regs;
+    ptrace(PTRACE_GETREGS, pid, NULL, &oldregs);
+    memcpy(&regs, &oldregs, sizeof(struct user_regs_struct));
+
+    // Simple x64 calling convention (RDI, RSI, RDX, RCX, R8, R9)
+    if (argc > 1) regs.rdi = toUint64(ctx, argv[1]);
+    if (argc > 2) regs.rsi = toUint64(ctx, argv[2]);
+    if (argc > 3) regs.rdx = toUint64(ctx, argv[3]);
+
+    // Push original RIP as return address (unsafe, but basic stub)
+    // For a real call we should use a codecave with an INT3 or loop
+    regs.rip = targetAddr;
+    
+    ptrace(PTRACE_SETREGS, pid, NULL, &regs);
+    ptrace(PTRACE_CONT, pid, NULL, NULL);
+    
+    // In a real implementation we would wait for a breakpoint or signal
+    // For now, we immediately detach (this is very risky/limited)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ptrace(PTRACE_DETACH, pid, NULL, NULL);
+
+    return JS_TRUE;
+}
+
+JSValue JavaScriptEngine::jsIsScanning(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || !s_current->m_memoryScanner) return JS_FALSE;
+    return static_cast<MemScanner*>(s_current->m_memoryScanner)->isScanning() ? JS_TRUE : JS_FALSE;
+}
+
+JSValue JavaScriptEngine::jsGetProgress(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || !s_current->m_memoryScanner) return JS_NewFloat64(ctx, 0.0);
+    return JS_NewFloat64(ctx, static_cast<MemScanner*>(s_current->m_memoryScanner)->getProgress());
+}
+
+JSValue JavaScriptEngine::jsGetResults(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || !s_current->m_memoryScanner) return JS_NewArray(ctx);
+    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
+    auto results = ms->getResults();
+    JSValue arr = JS_NewArray(ctx);
+    for (uint32_t i = 0; i < results.size(); ++i) {
+        JS_SetPropertyUint32(ctx, arr, i, JS_NewBigUint64(ctx, results[i].address));
+    }
+    return arr;
+}
+
+JSValue JavaScriptEngine::jsGetModules(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || !s_current->m_memoryScanner) return JS_NewArray(ctx);
+    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
+    auto regions = ms->getRegions();
+    JSValue arr = JS_NewArray(ctx);
+    uint32_t idx = 0;
+    std::string lastPath = "";
+    for (const auto& reg : regions) {
+        if (!reg.pathname.empty() && reg.pathname != lastPath) {
+            JSValue obj = JS_NewObject(ctx);
+            JS_SetPropertyStr(ctx, obj, "name", JS_NewString(ctx, reg.pathname.c_str()));
+            JS_SetPropertyStr(ctx, obj, "base", JS_NewBigUint64(ctx, reg.start));
+            JS_SetPropertyUint32(ctx, arr, idx++, obj);
+            lastPath = reg.pathname;
+        }
+    }
+    return arr;
+}
+
 JSValue JavaScriptEngine::jsGetProcessInfo(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     if (!s_current) return JS_NULL;
-
     JSValue obj = JS_NewObject(ctx);
     JS_SetPropertyStr(ctx, obj, "pid", JS_NewInt32(ctx, s_current->m_attachedPid));
     JS_SetPropertyStr(ctx, obj, "name", JS_NewString(ctx, s_current->m_attachedName.c_str()));
@@ -321,6 +399,25 @@ JSValue JavaScriptEngine::jsText(JSContext* ctx, JSValueConst this_val, int argc
     ImGui::Text("%s", text ? text : "");
     if (text) JS_FreeCString(ctx, text);
     return JS_TRUE;
+}
+
+JSValue JavaScriptEngine::jsInputText(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (argc < 2) return JS_UNDEFINED;
+    const char* label = JS_ToCString(ctx, argv[0]);
+    const char* value = JS_ToCString(ctx, argv[1]);
+    
+    char buffer[1024];
+    strncpy(buffer, value ? value : "", sizeof(buffer)-1);
+    
+    if (ImGui::InputText(label, buffer, sizeof(buffer))) {
+        JS_FreeCString(ctx, label);
+        JS_FreeCString(ctx, value);
+        return JS_NewString(ctx, buffer);
+    }
+    
+    JS_FreeCString(ctx, label);
+    JS_FreeCString(ctx, value);
+    return JS_NewString(ctx, buffer);
 }
 
 JSValue JavaScriptEngine::jsInputInt(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
@@ -406,7 +503,6 @@ JSValue JavaScriptEngine::jsCombo(JSContext* ctx, JSValueConst this_val, int arg
     if (argc < 3) return JS_NewInt32(ctx, 0);
     const char* label = JS_ToCString(ctx, argv[0]);
     int current = toInt32(ctx, argv[1]);
-    // TODO: Implement combo with items array
     JS_FreeCString(ctx, label);
     return JS_NewInt32(ctx, current);
 }
@@ -469,9 +565,7 @@ JSValue JavaScriptEngine::jsLog(JSContext* ctx, JSValueConst this_val, int argc,
         oss << (s ? s : "undefined");
         if (s) JS_FreeCString(ctx, s);
     }
-    if (s_current) {
-        s_current->addLog(ScriptLog::Info, oss.str());
-    }
+    if (s_current) s_current->addLog(ScriptLog::Info, oss.str());
     return JS_UNDEFINED;
 }
 
@@ -508,16 +602,132 @@ JSValue JavaScriptEngine::jsDrawText(JSContext* ctx, JSValueConst this_val, int 
     return JS_TRUE;
 }
 
-bool JavaScriptEngine::execute(const std::string& code) {
-    if (!m_ctx || !m_valid) {
-        m_lastError = "Runtime not initialized";
-        return false;
+JSValue JavaScriptEngine::jsUnityLoad(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || argc < 1) return JS_NULL;
+    const char* path = JS_ToCString(ctx, argv[0]);
+    if (!path) return JS_NULL;
+    if (s_current->m_unityDumper.isLoading()) {
+        JS_FreeCString(ctx, path);
+        return JS_ThrowInternalError(ctx, "Unity dump load already in progress");
     }
+    std::string pathStr(path);
+    JS_FreeCString(ctx, path);
+    s_current->m_unityDumper.loadDump(pathStr);
+    JSValue resolving_funcs[2];
+    JSValue promise = JS_NewPromiseCapability(ctx, resolving_funcs);
+    s_current->m_pendingUnityPromises.push_back({JS_DupValue(ctx, resolving_funcs[0]), JS_DupValue(ctx, resolving_funcs[1])});
+    return promise;
+}
 
+JSValue JavaScriptEngine::jsUnityGetAddress(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || argc < 3) return JS_NULL;
+    const char* ns = JS_ToCString(ctx, argv[0]);
+    const char* className = JS_ToCString(ctx, argv[1]);
+    const char* methodName = JS_ToCString(ctx, argv[2]);
+    uintptr_t rva = s_current->m_unityDumper.findMethodRVA(ns ? ns : "", className ? className : "", methodName ? methodName : "");
+    JS_FreeCString(ctx, ns); JS_FreeCString(ctx, className); JS_FreeCString(ctx, methodName);
+    if (rva == 0) return JS_NULL;
+    auto ms = static_cast<MemScanner*>(s_current->m_memoryScanner);
+    uintptr_t base = 0;
+    if (!s_current->m_unityModuleName.empty()) base = ms->getModuleBase(s_current->m_unityModuleName);
+    if (base == 0) base = ms->getModuleBase("libil2cpp.so");
+    if (base == 0) base = ms->getModuleBase("GameAssembly.dll");
+    if (base == 0) base = ms->getModuleBase("UnityPlayer.dll");
+    if (base == 0) {
+        s_current->addLog(ScriptLog::Warning, "Unity module base not found. Returning raw RVA.");
+        return JS_NewBigUint64(ctx, rva);
+    }
+    return JS_NewBigUint64(ctx, base + rva);
+}
+
+JSValue JavaScriptEngine::jsUnitySetModuleName(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || argc < 1) return JS_FALSE;
+    const char* name = JS_ToCString(ctx, argv[0]);
+    if (name) {
+        s_current->m_unityModuleName = name;
+        JS_FreeCString(ctx, name);
+        return JS_TRUE;
+    }
+    return JS_FALSE;
+}
+
+JSValue JavaScriptEngine::jsUnityGetModuleBase(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || !s_current->m_memoryScanner || argc < 1) return JS_NewBigUint64(ctx, 0);
+    const char* name = JS_ToCString(ctx, argv[0]);
+    uintptr_t base = static_cast<MemScanner*>(s_current->m_memoryScanner)->getModuleBase(name);
+    JS_FreeCString(ctx, name);
+    return JS_NewBigUint64(ctx, base);
+}
+
+JSValue JavaScriptEngine::jsUnitySearchClasses(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || argc < 1) return JS_NewArray(ctx);
+    const char* name = JS_ToCString(ctx, argv[0]);
+    auto classes = s_current->m_unityDumper.searchClasses(name ? name : "");
+    if (name) JS_FreeCString(ctx, name);
+    JSValue arr = JS_NewArray(ctx);
+    for (uint32_t i = 0; i < classes.size(); ++i) JS_SetPropertyUint32(ctx, arr, i, JS_NewString(ctx, classes[i].c_str()));
+    return arr;
+}
+
+JSValue JavaScriptEngine::jsUnityListMethods(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || argc < 2) return JS_NewArray(ctx);
+    const char* ns = JS_ToCString(ctx, argv[0]);
+    const char* className = JS_ToCString(ctx, argv[1]);
+    auto methods = s_current->m_unityDumper.listMethods(ns ? ns : "", className ? className : "");
+    JS_FreeCString(ctx, ns); JS_FreeCString(ctx, className);
+    JSValue arr = JS_NewArray(ctx);
+    for (uint32_t i = 0; i < methods.size(); ++i) JS_SetPropertyUint32(ctx, arr, i, JS_NewString(ctx, methods[i].c_str()));
+    return arr;
+}
+
+JSValue JavaScriptEngine::jsUnityGetFields(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    if (!s_current || argc < 2) return JS_NewArray(ctx);
+    const char* ns = JS_ToCString(ctx, argv[0]);
+    const char* className = JS_ToCString(ctx, argv[1]);
+    
+    auto fields = s_current->m_unityDumper.listFields(ns ? ns : "", className ? className : "");
+    
+    JS_FreeCString(ctx, ns);
+    JS_FreeCString(ctx, className);
+    
+    JSValue arr = JS_NewArray(ctx);
+    for (uint32_t i = 0; i < fields.size(); ++i) {
+        JSValue obj = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, obj, "name", JS_NewString(ctx, fields[i].name.c_str()));
+        JS_SetPropertyStr(ctx, obj, "type", JS_NewString(ctx, fields[i].type.c_str()));
+        JS_SetPropertyStr(ctx, obj, "offset", JS_NewBigUint64(ctx, fields[i].offset));
+        JS_SetPropertyUint32(ctx, arr, i, obj);
+    }
+    return arr;
+}
+
+JSValue JavaScriptEngine::jsUnityFindObject(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    // This typically requires scanning the GameObject list in Unity memory.
+    // For now, return an empty array or implement a basic AOB/String scan for the name if possible.
+    return JS_NewArray(ctx);
+}
+
+JSValue JavaScriptEngine::jsUnityGetComponents(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    // Typically involves reading the Component list from a GameObject address.
+    return JS_NewArray(ctx);
+}
+
+JSValue JavaScriptEngine::jsUnityIsLoading(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    return (s_current && s_current->m_unityDumper.isLoading()) ? JS_TRUE : JS_FALSE;
+}
+
+JSValue JavaScriptEngine::jsUnityGetLoadProgress(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    return JS_NewFloat64(ctx, s_current ? s_current->m_unityDumper.getLoadProgress() : 0.0);
+}
+
+JSValue JavaScriptEngine::jsUnityIsLoaded(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    return (s_current && s_current->m_unityDumper.isLoaded()) ? JS_TRUE : JS_FALSE;
+}
+
+bool JavaScriptEngine::execute(const std::string& code) {
+    if (!m_ctx || !m_valid) return false;
     s_current = this;
-
     JSValue val = JS_Eval(m_ctx, code.c_str(), code.size(), "<script>", JS_EVAL_TYPE_GLOBAL);
-
     if (JS_IsException(val)) {
         JSValue exc = JS_GetException(m_ctx);
         const char* str = JS_ToCString(m_ctx, exc);
@@ -529,51 +739,51 @@ bool JavaScriptEngine::execute(const std::string& code) {
         JS_FreeValue(m_ctx, val);
         return false;
     }
-
     JS_FreeValue(m_ctx, val);
     m_lastError.clear();
-
-    // Process promise microtasks
     JSContext* ctx1;
     while (JS_ExecutePendingJob(m_rt, &ctx1) > 0);
-
     return true;
 }
 
 void JavaScriptEngine::triggerUpdate() {
     if (!m_ctx || !m_valid) return;
     s_current = this;
-    
-    // Check scanner status and resolve promises if finished
     if (m_memoryScanner) {
         auto ms = static_cast<MemScanner*>(m_memoryScanner);
         bool isScanning = ms->isScanning();
         if (m_wasScanning && !isScanning) {
-            // Scan just finished
             auto results = ms->getResults();
-            
-            // Create a JS array of the results
             JSValue resultsArr = JS_NewArray(m_ctx);
-            for (uint32_t i = 0; i < results.size(); ++i) {
-                JS_SetPropertyUint32(m_ctx, resultsArr, i, JS_NewBigUint64(m_ctx, results[i].address));
-            }
-
+            for (uint32_t i = 0; i < results.size(); ++i) JS_SetPropertyUint32(m_ctx, resultsArr, i, JS_NewBigUint64(m_ctx, results[i].address));
             for (auto& promise : m_pendingPromises) {
                 JSValue res = JS_Call(m_ctx, promise.resolve, JS_UNDEFINED, 1, &resultsArr);
-                JS_FreeValue(m_ctx, res);
-                JS_FreeValue(m_ctx, promise.resolve);
-                JS_FreeValue(m_ctx, promise.reject);
+                JS_FreeValue(m_ctx, res); JS_FreeValue(m_ctx, promise.resolve); JS_FreeValue(m_ctx, promise.reject);
             }
-            m_pendingPromises.clear();
-            JS_FreeValue(m_ctx, resultsArr);
+            m_pendingPromises.clear(); JS_FreeValue(m_ctx, resultsArr);
         }
         m_wasScanning = isScanning;
     }
-
-    // Process promise microtasks
+    bool isUnityLoading = m_unityDumper.isLoading();
+    if (m_wasUnityLoading && !isUnityLoading) {
+        bool success = m_unityDumper.isLoaded();
+        JSValue resVal = success ? JS_TRUE : JS_FALSE;
+        for (auto& promise : m_pendingUnityPromises) {
+            if (success) {
+                JSValue res = JS_Call(m_ctx, promise.resolve, JS_UNDEFINED, 1, &resVal);
+                JS_FreeValue(m_ctx, res);
+            } else {
+                JSValue err = JS_NewString(m_ctx, "Failed to load Unity dump");
+                JSValue res = JS_Call(m_ctx, promise.reject, JS_UNDEFINED, 1, &err);
+                JS_FreeValue(m_ctx, err); JS_FreeValue(m_ctx, res);
+            }
+            JS_FreeValue(m_ctx, promise.resolve); JS_FreeValue(m_ctx, promise.reject);
+        }
+        m_pendingUnityPromises.clear();
+    }
+    m_wasUnityLoading = isUnityLoading;
     JSContext* ctx1;
     while (JS_ExecutePendingJob(m_rt, &ctx1) > 0);
-
     JSValue global = JS_GetGlobalObject(m_ctx);
     JSValue onUpdate = JS_GetPropertyStr(m_ctx, global, "onUpdate");
     if (JS_IsFunction(m_ctx, onUpdate)) {
@@ -587,14 +797,17 @@ void JavaScriptEngine::triggerUpdate() {
         }
         JS_FreeValue(m_ctx, res);
     }
-    JS_FreeValue(m_ctx, onUpdate);
-    JS_FreeValue(m_ctx, global);
+    JS_FreeValue(m_ctx, onUpdate); JS_FreeValue(m_ctx, global);
 }
 
 void JavaScriptEngine::triggerGUI() {
     if (!m_ctx || !m_valid) return;
     s_current = this;
-    
+
+    // Save stack depth
+    ImGuiContext& g = *GImGui;
+    int windowStackSize = g.CurrentWindowStack.Size;
+
     JSValue global = JS_GetGlobalObject(m_ctx);
     JSValue onGUI = JS_GetPropertyStr(m_ctx, global, "onGUI");
     if (JS_IsFunction(m_ctx, onGUI)) {
@@ -610,6 +823,12 @@ void JavaScriptEngine::triggerGUI() {
     }
     JS_FreeValue(m_ctx, onGUI);
     JS_FreeValue(m_ctx, global);
+
+    // Force-close any windows left open by the script
+    while (g.CurrentWindowStack.Size > windowStackSize) {
+        ImGui::End();
+    }
 }
+
 
 } // namespace laugh

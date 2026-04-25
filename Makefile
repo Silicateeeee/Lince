@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++17 -Iinclude -Ilibs/imgui -Ilibs/imgui/backends -Ilibs/imgui/
 LDFLAGS = -Llibs/quickjs -Llibs/glfw -lGL -ldl -lpthread -lm -lX11 -lquickjs -lglfw3
 
 IMGUI_DIR = libs/imgui
-SOURCES = src/main.cpp src/process.cpp src/mem_scanner.cpp src/jsruntime.cpp \
+SOURCES = src/main.cpp src/process.cpp src/mem_scanner.cpp src/jsruntime.cpp src/unity_dumper.cpp \
           $(IMGUI_DIR)/imgui.cpp $(IMGUI_DIR)/imgui_draw.cpp $(IMGUI_DIR)/imgui_widgets.cpp $(IMGUI_DIR)/imgui_tables.cpp \
           $(IMGUI_DIR)/backends/imgui_impl_glfw.cpp $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp
 

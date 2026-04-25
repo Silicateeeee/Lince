@@ -71,6 +71,8 @@ public:
     static std::vector<AOBByte> parseAOB(const std::string& pattern);
 
     bool patch(uintptr_t address, const std::string& pattern);
+    uintptr_t getModuleBase(const std::string& name);
+    ssize_t readRaw(uintptr_t address, void* buffer, size_t size);
 
 private:
     pid_t m_pid = -1;
@@ -80,7 +82,6 @@ private:
     std::atomic<bool> m_isScanning{false};
     std::atomic<float> m_progress{0.0f};
     
-    ssize_t readRaw(uintptr_t address, void* buffer, size_t size);
     ssize_t writeRaw(uintptr_t address, const void* buffer, size_t size);
 
     void scanRegionChunked(const MemoryRegion& region, ValueType type, uint32_t targetVal, float targetFloat, const std::string& targetStr, std::vector<ScanResult>& localResults);

@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "quickjs.h"
+#include "unity_dumper.hpp"
 
 namespace laugh {
 
@@ -55,7 +56,9 @@ private:
     std::string m_lastError;
     std::vector<ScriptLog> m_logs;
     std::vector<PendingPromise> m_pendingPromises;
+    std::vector<PendingPromise> m_pendingUnityPromises;
     bool m_wasScanning = false;
+    bool m_wasUnityLoading = false;
 
     UpdateCallback m_onUpdate;
     std::function<void(const std::string&)> m_errorHandler;
@@ -67,6 +70,8 @@ private:
     void* m_processList = nullptr;
     int m_attachedPid = -1;
     std::string m_attachedName = "None";
+    std::string m_unityModuleName = "";
+    UnityDumper m_unityDumper;
 
     bool m_valid = false;
     static std::atomic<int> s_nextId;
@@ -79,15 +84,18 @@ private:
     static JSValue jsWriteMemory(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsScanMemory(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsAOBScan(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsMemoryCall(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsIsScanning(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsGetProgress(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsGetResults(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsGetModules(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsGetProcessInfo(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
 
     static JSValue jsWindowBegin(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsWindowEnd(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsButton(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsText(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsInputText(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsInputInt(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsInputFloat(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsCheckbox(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
@@ -114,6 +122,19 @@ private:
     static JSValue jsDrawRect(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsDrawCircle(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue jsDrawText(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+
+    static JSValue jsUnityLoad(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityGetAddress(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnitySetModuleName(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityGetModuleBase(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnitySearchClasses(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityListMethods(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityGetFields(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityFindObject(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityGetComponents(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityIsLoading(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityGetLoadProgress(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+    static JSValue jsUnityIsLoaded(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
 };
 
 } // namespace laugh

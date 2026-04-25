@@ -76,6 +76,17 @@ std::vector<MemoryRegion> MemScanner::getRegions() {
     return regions;
 }
 
+uintptr_t MemScanner::getModuleBase(const std::string& name) {
+    if (m_pid == -1) return 0;
+    auto regions = getRegions();
+    for (const auto& region : regions) {
+        if (region.pathname.find(name) != std::string::npos) {
+            return region.start;
+        }
+    }
+    return 0;
+}
+
 ssize_t MemScanner::readRaw(uintptr_t address, void* buffer, size_t size) {
     if (m_pid == -1) return -1;
     struct iovec local[1];
